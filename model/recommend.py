@@ -1,10 +1,17 @@
 import pickle
+from pathlib import Path
 import pandas as pd
 
-with open('neighbors.pkl', 'rb') as f:
+# Anchor to this file's own location, not the caller's working directory --
+# this is what lets api/main.py import `recommend` from api/ and still find
+# the right files, and it's what keeps this working once this runs inside
+# a Docker container with a different working directory (phase 3).
+MODEL_DIR = Path(__file__).resolve().parent
+
+with open(MODEL_DIR / 'neighbors.pkl', 'rb') as f:
     NEIGHBORS = pickle.load(f)
 
-TRACKS = pd.read_pickle('tracks.pkl').set_index('track_id')
+TRACKS = pd.read_pickle(MODEL_DIR / 'tracks.pkl').set_index('track_id')
 
 
 def recommend(track_name, artist=None, n=5):
