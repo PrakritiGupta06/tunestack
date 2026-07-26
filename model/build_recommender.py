@@ -44,7 +44,7 @@ def build_soup(row):
 def main():
     df = pd.read_csv('spotify_songs.csv')
     df = df.drop_duplicates(subset=['track_name', 'track_artist'])
-    df = df.sort_values('track_popularity', ascending=False).head(N_TRACKS)
+    df = df.sort_values('track_popularity', ascending=False, kind='stable').head(N_TRACKS)
     df = df.reset_index(drop=True)
 
     soup = df.apply(build_soup, axis=1)
@@ -56,7 +56,7 @@ def main():
     neighbors = {}
     for i in range(len(df)):
         row = sim[i]
-        ranked_idx = np.argsort(-row)
+        ranked_idx = np.argsort(-row, kind='stable')
         selected = []
         artist_counts = {}
         for j in ranked_idx:

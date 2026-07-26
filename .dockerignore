@@ -1,0 +1,9 @@
+venv/
+.venv/
+__pycache__/
+*.pyc
+.git/
+model/spotify_songs.csv
+model/neighbors.pkl
+model/tracks.pkl
+.DS_Store
