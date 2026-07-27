@@ -9,3 +9,9 @@ resource "google_project_iam_member" "cicd_artifact_writer" {
   role    = "roles/artifactregistry.writer"
   member  = "serviceAccount:${google_service_account.cicd.email}"
 }
+
+resource "google_project_iam_member" "cicd_gke_developer" {
+  project = var.project_id
+  role    = "roles/container.developer"
+  member  = "serviceAccount:${google_service_account.cicd.email}"
+}
