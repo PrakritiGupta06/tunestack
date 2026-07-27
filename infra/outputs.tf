@@ -13,3 +13,11 @@ output "artifact_registry_repo" {
 output "cicd_service_account_email" {
   value = google_service_account.cicd.email
 }
+
+output "cluster_name" {
+  value = google_container_cluster.autopilot.name
+}
+
+output "cluster_location" {
+  value = google_container_cluster.autopilot.location
+}
