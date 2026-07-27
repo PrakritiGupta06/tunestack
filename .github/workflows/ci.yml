@@ -1,0 +1,61 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build the model
+        run: |
+          pip install -r model/requirements.txt
+          cd model
+          python download_data.py
+          python build_recommender.py
+
+      - name: Install API + test dependencies
+        run: pip install -r api/requirements.txt -r api/requirements-dev.txt
+
+      - name: Run tests
+        run: |
+          cd api
+          pytest -v
+
+  build-and-push:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: projects/59784462743/locations/global/workloadIdentityPools/github-actions-pool/providers/github-actions-provider
+          service_account: tunestack-cicd@tunestack-503619.iam.gserviceaccount.com
+          project_id: tunestack-503619
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker us-central1-docker.pkg.dev --quiet
+
+      - name: Build image
+        run: |
+          docker build \
+            -t us-central1-docker.pkg.dev/tunestack-503619/tunestack/tunestack-api:${{ github.sha }} \
+            -t us-central1-docker.pkg.dev/tunestack-503619/tunestack/tunestack-api:latest \
+            .
+
+      - name: Push image
+        run: docker push --all-tags us-central1-docker.pkg.dev/tunestack-503619/tunestack/tunestack-api
