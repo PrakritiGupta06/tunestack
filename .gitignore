@@ -22,3 +22,8 @@ model/similarity.npy
 # Environment variables (phase 10)
 .env
 *.env
+
+infra/.terraform/
+infra/*.tfstate
+infra/*.tfstate.backup
+infra/terraform.tfvars
