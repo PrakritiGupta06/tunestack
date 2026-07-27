@@ -3,6 +3,7 @@ from pathlib import Path
 from typing import List, Optional
 
 from fastapi import FastAPI, HTTPException, Query
+from prometheus_fastapi_instrumentator import Instrumentator
 from pydantic import BaseModel
 from fastapi.responses import RedirectResponse
 
@@ -14,6 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "model"))
 from recommend import recommend  # noqa: E402
 
 app = FastAPI(title="TuneStack Recommender API")
+Instrumentator().instrument(app).expose(app)
 
 
 class Recommendation(BaseModel):
