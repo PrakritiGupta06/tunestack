@@ -2,10 +2,13 @@ apiVersion: v1
 kind: Service
 metadata:
   name: tunestack-api
+  labels:
+    app: tunestack-api
 spec:
   type: LoadBalancer
   selector:
     app: tunestack-api
   ports:
-    - port: 80
+    - name: http
+      port: 80
       targetPort: 8000
