@@ -1,6 +1,10 @@
 resource "google_container_cluster" "autopilot" {
   name     = "tunestack-cluster"
   location = var.region
+  
+  secret_manager_config {
+    enabled = true
+  }
 
   enable_autopilot = true
 
