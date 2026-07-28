@@ -34,3 +34,9 @@ python download_data.py
 python build_recommender.py
 python recommend.py
 ```
+
+## Known limitation: Grafana admin credential rotation
+
+Phase 10 wires the CSI Secrets Store driver to Secret Manager via GKE Workload Identity, verified end-to-end with a disposable test pod: a value stored in Secret Manager, read live into a running pod's filesystem, no static key or downloaded credential anywhere in the chain.
+
+Wiring this specifically into Grafana's `admin.existingSecret` was evaluated and deliberately not pursued further. `kube-prometheus-stack`/Grafana has a long-standing, still-open upstream issue (tracked across multiple GitHub issues since 2022) where Grafana caches the admin password in its own internal database at first boot and doesn't reliably re-read it afterward, even when the pod's environment variable is confirmed correctly updated. Forcing this further would mean resetting Grafana's internal database for a result that's genuinely hard to verify as the fix rather than the original cached value. The platform-level mechanism — Secret Manager plus Workload Identity — is what's actually being demonstrated here, and it's proven independent of this one chart's limitation.
