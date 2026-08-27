@@ -14,6 +14,10 @@ model/tracks.pkl
 model/neighbors.pkl
 model/similarity.npy
 
+# Local job_auto review queue output (contains user-provided resume-derived data)
+job_auto/data/
+job_auto/output/
+
 # OS / editor
 .DS_Store
 .vscode/

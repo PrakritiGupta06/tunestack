@@ -1,0 +1,82 @@
+# job_auto — Option A: deterministic regex fallback
+#
+# spaCy is deliberately not installed or loaded in this starter project.
+# Keep this false until you deliberately add a model-backed parser.
+nlp:
+  engine: regex
+  spacy_available: false
+
+profile:
+  name: "Your Name"
+  # Set a relative or absolute path for normal runs, for example:
+  # resume: "my_resume.txt"
+  resume: null
+  target_roles:
+    - "platform engineer"
+    - "backend engineer"
+  locations:
+    - "remote"
+  # Add skills that are valid but missing from the resume text. Values are
+  # normalized against skills.catalog aliases where possible.
+  skills: []
+
+skills:
+  # Canonical skill: accepted aliases. Add only terms you want to score; this
+  # keeps the regex matcher explainable and avoids broad, accidental matches.
+  catalog:
+    python: ["python", "python3"]
+    sql: ["sql", "postgresql", "mysql", "sqlite"]
+    fastapi: ["fastapi", "fast api"]
+    docker: ["docker", "containers"]
+    kubernetes: ["kubernetes", "k8s"]
+    terraform: ["terraform"]
+    gcp: ["gcp", "google cloud", "google cloud platform"]
+    aws: ["aws", "amazon web services"]
+    azure: ["azure", "microsoft azure"]
+    git: ["git", "github", "gitlab"]
+    github actions: ["github actions"]
+    ci/cd: ["ci/cd", "continuous integration", "continuous deployment"]
+    prometheus: ["prometheus"]
+    grafana: ["grafana"]
+    linux: ["linux"]
+    rest api: ["rest api", "restful api", "restful services"]
+    pandas: ["pandas"]
+    machine learning: ["machine learning", "ml"]
+    javascript: ["javascript", "ecmascript"]
+    typescript: ["typescript"]
+    react: ["react", "react.js", "reactjs"]
+
+matching:
+  # Scores are 0–100 and are intended to prioritize a human review queue,
+  # never to make an automatic application decision.
+  minimum_score: 45
+  max_results: 20
+  weights:
+    required_skills: 70
+    preferred_skills: 15
+    title: 10
+    location: 5
+  # Example: ["unpaid internship", "commission only"]
+  exclude_terms: []
+
+sources:
+  # The built-in source lets `python main.py --demo` run without network access.
+  # Replace with one or more sources below for your own review queue.
+  - type: demo
+
+  # Local JSON array, JSON object with a `jobs` list, or JSONL:
+  # - type: json
+  #   name: saved-search
+  #   path: jobs.json
+  #
+  # Public RSS or Atom feed (no login-protected scraping):
+  # - type: rss
+  #   name: careers-feed
+  #   url: https://example.com/jobs.rss
+  #   company: Example Company       # optional fallback metadata
+  #   location: Remote               # optional fallback metadata
+
+storage:
+  # These paths are resolved relative to this config file.
+  database: data/job_auto.sqlite3
+  report: output/job_matches.csv
