@@ -35,8 +35,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
         # Used by --live until a local resume path is supplied. Keep it factual
         # and free of contact details; it is relevance input, not an application.
         "summary": (
-            "Site Reliability and Platform Operations engineer with 3+ years "
-            "supporting distributed enterprise applications. Experience with GCP "
+            "Site Reliability and Platform Operations engineer with 3+ years of "
+            "experience supporting distributed enterprise applications. Experience with GCP "
             "Anthos/GKE, Kubernetes, Terraform, Docker, GitHub Actions, Linux, "
             "Python, Bash, Java/Spring Boot, Pub/Sub, Apache Airflow, Splunk, "
             "Prometheus, Grafana, incident response, SLI/SLO monitoring, and SQL."
