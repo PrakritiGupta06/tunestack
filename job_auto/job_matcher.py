@@ -7,7 +7,7 @@ import re
 from typing import Any, Iterable, Mapping
 
 from job_scraper import Job
-from resume_parser import ResumeProfile, canonicalize_skills, extract_skills
+from resume_parser import ResumeProfile, SkillExtractor, canonicalize_skills, extract_skills
 
 
 @dataclass(frozen=True)
@@ -16,6 +16,8 @@ class JobMatch:
 
     job: Job
     score: float
+    keyword_score: float
+    semantic_score: float | None
     matched_skills: tuple[str, ...]
     missing_skills: tuple[str, ...]
     matched_required_skills: tuple[str, ...]
@@ -26,6 +28,8 @@ class JobMatch:
         return {
             "job": self.job.to_dict(),
             "score": self.score,
+            "keyword_score": self.keyword_score,
+            "semantic_score": self.semantic_score,
             "matched_skills": list(self.matched_skills),
             "missing_skills": list(self.missing_skills),
             "matched_required_skills": list(self.matched_required_skills),
@@ -45,7 +49,11 @@ def _ratio(numerator: int, denominator: int) -> float:
     return numerator / denominator if denominator else 0.0
 
 
-def _job_skill_sets(job: Job, catalog: Mapping[str, Iterable[str]]) -> tuple[tuple[str, ...], tuple[str, ...]]:
+def _job_skill_sets(
+    job: Job,
+    catalog: Mapping[str, Iterable[str]],
+    skill_extractor: SkillExtractor = extract_skills,
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
     """Get explicit job skills, or infer known phrases from a posting's text."""
 
     required = canonicalize_skills(job.required_skills, catalog)
@@ -55,7 +63,7 @@ def _job_skill_sets(job: Job, catalog: Mapping[str, Iterable[str]]) -> tuple[tup
         preferred = tuple(skill for skill in preferred if skill not in required)
         return required, preferred
 
-    detected = extract_skills(f"{job.title}\n{job.description}", catalog)
+    detected = skill_extractor(f"{job.title}\n{job.description}", catalog)
     return detected, ()
 
 
@@ -111,6 +119,8 @@ def score_job(
     catalog: Mapping[str, Iterable[str]],
     matching: Mapping[str, Any],
     profile_preferences: Mapping[str, Any],
+    semantic_score: float | None = None,
+    skill_extractor: SkillExtractor = extract_skills,
 ) -> JobMatch:
     """Score one job with transparent coverage-based rules.
 
@@ -120,7 +130,7 @@ def score_job(
     the person can decide whether the gap is acceptable.
     """
 
-    required, preferred = _job_skill_sets(job, catalog)
+    required, preferred = _job_skill_sets(job, catalog, skill_extractor)
     candidate_skills = set(profile.skills)
     matched_required = tuple(skill for skill in required if skill in candidate_skills)
     matched_preferred = tuple(skill for skill in preferred if skill in candidate_skills)
@@ -128,7 +138,8 @@ def score_job(
     missing = tuple(skill for skill in required if skill not in candidate_skills)
 
     weights = matching["weights"]
-    raw_weight_total = sum(float(value) for value in weights.values())
+    keyword_weight_names = ("required_skills", "preferred_skills", "title", "location")
+    keyword_weight_total = sum(float(weights[name]) for name in keyword_weight_names)
     required_coverage = _ratio(len(matched_required), len(required))
     preferred_coverage = _ratio(len(matched_preferred), len(preferred))
     title_coverage, title_reason = _title_alignment(job.title, profile_preferences.get("target_roles", []))
@@ -143,13 +154,25 @@ def score_job(
     if required and not preferred and not job.required_skills:
         skill_weight += float(weights["preferred_skills"])
 
-    raw_score = (
+    keyword_raw_score = (
         skill_weight * required_coverage
         + float(weights["preferred_skills"]) * preferred_coverage
         + float(weights["title"]) * title_coverage
         + float(weights["location"]) * location_coverage
     )
-    score = round((raw_score / raw_weight_total) * 100, 1) if raw_weight_total else 0.0
+    keyword_score = (
+        round((keyword_raw_score / keyword_weight_total) * 100, 1)
+        if keyword_weight_total
+        else 0.0
+    )
+
+    # The semantic component is included only when the local TF-IDF model was
+    # actually available for this batch; fallback runs are not penalized for a
+    # dependency they intentionally do not use.
+    semantic_weight = float(weights.get("semantic", 0)) if semantic_score is not None else 0.0
+    total_weight = keyword_weight_total + semantic_weight
+    blended_raw_score = keyword_raw_score + semantic_weight * (semantic_score or 0.0) / 100
+    score = round((blended_raw_score / total_weight) * 100, 1) if total_weight else 0.0
 
     reasons: list[str] = []
     if required:
@@ -170,12 +193,16 @@ def score_job(
         reasons.append(title_reason)
     if location_reason:
         reasons.append(location_reason)
+    if semantic_score is not None:
+        reasons.append(f"Local semantic relevance: {semantic_score:.1f}%")
     if missing:
         reasons.append(f"Missing required skills: {', '.join(missing)}")
 
     return JobMatch(
         job=job,
         score=score,
+        keyword_score=keyword_score,
+        semantic_score=semantic_score,
         matched_skills=matched_skills,
         missing_skills=missing,
         matched_required_skills=matched_required,
@@ -190,12 +217,23 @@ def rank_jobs(
     catalog: Mapping[str, Iterable[str]],
     matching: Mapping[str, Any],
     profile_preferences: Mapping[str, Any],
+    semantic_scores: Mapping[str, float] | None = None,
+    skill_extractor: SkillExtractor = extract_skills,
 ) -> list[JobMatch]:
-    """Filter excluded postings then return deterministic highest-score-first matches."""
+    """Filter postings and return deterministic highest-score-first matches."""
 
     excluded_terms = matching.get("exclude_terms", [])
+    semantic_scores = semantic_scores or {}
     matches = [
-        score_job(job, profile, catalog, matching, profile_preferences)
+        score_job(
+            job,
+            profile,
+            catalog,
+            matching,
+            profile_preferences,
+            semantic_score=semantic_scores.get(job.id),
+            skill_extractor=skill_extractor,
+        )
         for job in jobs
         if not _is_excluded(job, excluded_terms)
     ]

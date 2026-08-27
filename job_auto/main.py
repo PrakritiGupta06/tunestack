@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the regex-only job discovery and matching pipeline.
+"""Run the local hybrid job-discovery and relevance-ranking pipeline.
 
 The command builds a local review queue. It does not submit applications,
 interact with login-protected sites, or store credentials.
@@ -14,9 +14,10 @@ import sys
 from typing import Any, Iterable, Mapping
 
 from application_tracker import ApplicationTracker, TrackerError
-from config import ConfigError, SPACY_AVAILABLE, load_config, resolve_path, skill_catalog
+from config import ConfigError, load_config, resolve_path, skill_catalog
 from job_matcher import JobMatch, rank_jobs
 from job_scraper import DEMO_RESUME, SourceError, load_jobs
+from nlp_model import HybridRelevanceModel
 from resume_parser import ResumeError, add_profile_skills, parse_resume_file, parse_resume_text
 
 
@@ -35,7 +36,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--resume",
-        help="Path to a .txt, .md, .rst, or text-based .pdf resume; overrides profile.resume",
+        help="Path to a .txt, .md, .rst, .tex, or text-based .pdf resume; overrides profile.resume",
     )
     source_group = parser.add_mutually_exclusive_group()
     source_group.add_argument(
@@ -52,6 +53,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--demo",
         action="store_true",
         help="Use bundled sample resume and postings; no network access is made",
+    )
+    source_group.add_argument(
+        "--live",
+        action="store_true",
+        help="Use configured public job APIs/career boards instead of the offline demo",
     )
     parser.add_argument(
         "--minimum-score",
@@ -70,7 +76,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--no-store",
         action="store_true",
-        help="Print results without writing SQLite or CSV output",
+        help="Print results without writing SQLite, CSV, or JSON report output",
     )
     parser.add_argument(
         "--json",
@@ -92,12 +98,15 @@ def _has_demo_source(sources: Iterable[Mapping[str, Any]]) -> bool:
 def _run_sources(
     args: argparse.Namespace,
     configured_sources: list[Mapping[str, Any]],
+    live_sources: list[Mapping[str, Any]],
     config_dir: Path,
 ) -> tuple[list[Mapping[str, Any]], Path]:
     """Construct this run's sources and the base directory for relative paths."""
 
     if args.demo:
         return [{"type": "demo", "name": "demo"}], Path.cwd()
+    if args.live:
+        return live_sources, config_dir
     if args.jobs:
         if args.jobs.startswith(("http://", "https://")):
             return [{"type": "json", "url": args.jobs, "name": "command-line-json"}], Path.cwd()
@@ -115,9 +124,10 @@ def _profile_for_run(
     config_dir: Path,
     catalog: Mapping[str, Iterable[str]],
     sources: Iterable[Mapping[str, Any]],
+    model: HybridRelevanceModel,
 ):
     if args.demo and not args.resume:
-        profile = parse_resume_text(DEMO_RESUME, catalog)
+        profile = parse_resume_text(DEMO_RESUME, catalog, model.extract_skills)
     else:
         resume_value = args.resume or config["profile"].get("resume")
         if resume_value:
@@ -125,12 +135,17 @@ def _profile_for_run(
             # a YAML path is interpreted relative to config.yaml.
             base_dir = Path.cwd() if args.resume else config_dir
             resume_path = resolve_path(resume_value, base_dir)
-            profile = parse_resume_file(resume_path, catalog)
+            profile = parse_resume_file(resume_path, catalog, model.extract_skills)
         elif _has_demo_source(sources):
-            profile = parse_resume_text(DEMO_RESUME, catalog)
+            profile = parse_resume_text(DEMO_RESUME, catalog, model.extract_skills)
+        elif config["profile"].get("summary"):
+            # A factual, contact-free profile summary supports --live before a
+            # user stores a resume file in the workspace.
+            profile = parse_resume_text(config["profile"]["summary"], catalog, model.extract_skills)
         else:
             raise ResumeError(
-                "No resume was supplied. Set profile.resume in config.yaml or pass --resume PATH."
+                "No resume or profile summary was supplied. Set profile.resume/summary in config.yaml "
+                "or pass --resume PATH."
             )
     return add_profile_skills(profile, config["profile"].get("skills", []), catalog)
 
@@ -169,20 +184,29 @@ def _print_table(matches: list[JobMatch]) -> None:
             _truncate(", ".join(match.matched_skills) or "—", 36),
         )
         print("  ".join(f"{cell:<{width}}" for cell, (_, width) in zip(cells, columns)))
+        if match.semantic_score is not None:
+            print(
+                f"         Relevance: keyword {match.keyword_score:.1f}% | "
+                f"semantic {match.semantic_score:.1f}%"
+            )
         if match.missing_skills:
             print(f"         Missing: {', '.join(match.missing_skills)}")
         if match.job.url:
             print(f"         Review:  {match.job.url}")
 
 
-def _print_json(matches: list[JobMatch]) -> None:
-    print(json.dumps([match.to_dict() for match in matches], indent=2, ensure_ascii=False))
+def _print_json(matches: list[JobMatch], model: HybridRelevanceModel) -> None:
+    print(
+        json.dumps(
+            {"model": model.status.to_dict(), "matches": [match.to_dict() for match in matches]},
+            indent=2,
+            ensure_ascii=False,
+        )
+    )
 
 
 def run(args: argparse.Namespace) -> int:
     config, config_dir = load_config(args.config)
-    if SPACY_AVAILABLE is not False:  # Defensive: Option A must never claim to use spaCy.
-        raise ConfigError("This project is configured for regex fallback only")
 
     if args.minimum_score is not None:
         if not 0 <= args.minimum_score <= 100:
@@ -193,23 +217,38 @@ def run(args: argparse.Namespace) -> int:
             raise ConfigError("--limit must be at least 1")
         config["matching"]["max_results"] = args.limit
 
-    sources, source_base_dir = _run_sources(args, config["sources"], config_dir)
+    sources, source_base_dir = _run_sources(
+        args,
+        config["sources"],
+        config["live_sources"],
+        config_dir,
+    )
     catalog = skill_catalog(config)
-    profile = _profile_for_run(args, config, config_dir, catalog, sources)
+    model = HybridRelevanceModel(catalog, config["nlp"])
+    profile = _profile_for_run(args, config, config_dir, catalog, sources, model)
     if args.show_profile and not args.json:
         _display_profile(profile)
 
     jobs = load_jobs(sources, source_base_dir)
-    matches = rank_jobs(jobs, profile, catalog, config["matching"], config["profile"])
+    semantic_scores = model.semantic_scores(profile.text, profile.skills, jobs)
+    matches = rank_jobs(
+        jobs,
+        profile,
+        catalog,
+        config["matching"],
+        config["profile"],
+        semantic_scores=semantic_scores if model.status.semantic_available else None,
+        skill_extractor=model.extract_skills,
+    )
     minimum_score = float(config["matching"]["minimum_score"])
     limit = int(config["matching"]["max_results"])
     selected = [match for match in matches if match.score >= minimum_score][:limit]
 
     if args.json:
-        _print_json(selected)
+        _print_json(selected, model)
     else:
         print(
-            f"Regex fallback active (SPACY_AVAILABLE={SPACY_AVAILABLE}). "
+            f"Model: {model.status.description}. "
             f"Scored {len(jobs)} posting(s); {len(selected)} met {minimum_score:g}% minimum.\n"
         )
         _print_table(selected)
@@ -219,14 +258,17 @@ def run(args: argparse.Namespace) -> int:
         report_value = args.report or config["storage"]["report"]
         report_base_dir = Path.cwd() if args.report else config_dir
         report_path = resolve_path(report_value, report_base_dir)
+        details_path = resolve_path(config["storage"]["details_report"], config_dir)
         tracker = ApplicationTracker(database_path)
         saved = tracker.record_matches(selected)
         report_path = tracker.export_csv(report_path, selected)
+        details_path = tracker.export_json(details_path, selected, model.status.to_dict())
         if not args.json:
             queue = tracker.summary()
             print(
                 f"\nSaved {saved} match(es) to {database_path}\n"
                 f"Wrote CSV review queue to {report_path}\n"
+                f"Wrote full job-details JSON to {details_path}\n"
                 f"Local queue: {queue['review']} review item(s), {queue['total']} total."
             )
     return 0

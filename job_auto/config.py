@@ -13,8 +13,8 @@ from typing import Any, Mapping
 
 import yaml
 
-# Option A: do not import, download, or require a spaCy language model.
-SPACY_AVAILABLE = False
+# Runtime spaCy capability is detected by nlp_model.py. The YAML configuration
+# selects whether to use the hybrid model or the deterministic regex fallback.
 
 
 class ConfigError(ValueError):
@@ -23,12 +23,24 @@ class ConfigError(ValueError):
 
 DEFAULT_CONFIG: dict[str, Any] = {
     "nlp": {
-        "engine": "regex",
-        "spacy_available": False,
+        # "hybrid" uses local TF-IDF relevance scoring and spaCy phrase
+        # matching when installed. "regex" remains available for lightweight,
+        # dependency-free runs.
+        "engine": "hybrid",
+        "spacy_model": "en_core_web_sm",
     },
     "profile": {
         "name": "Your Name",
         "resume": None,
+        # Used by --live until a local resume path is supplied. Keep it factual
+        # and free of contact details; it is relevance input, not an application.
+        "summary": (
+            "Site Reliability and Platform Operations engineer with 3+ years "
+            "supporting distributed enterprise applications. Experience with GCP "
+            "Anthos/GKE, Kubernetes, Terraform, Docker, GitHub Actions, Linux, "
+            "Python, Bash, Java/Spring Boot, Pub/Sub, Apache Airflow, Splunk, "
+            "Prometheus, Grafana, incident response, SLI/SLO monitoring, and SQL."
+        ),
         # Defaults are tuned for an early-to-mid-career SRE/DevOps search.
         "target_roles": [
             "site reliability engineer",
@@ -65,8 +77,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
         ],
     },
     "skills": {
-        # Keys are the canonical values written to reports.  Values are phrases
-        # the regex matcher should treat as equivalent.
+        # Keys are the canonical values written to reports. Values are phrases
+        # the phrase/regex matcher should treat as equivalent.
         "catalog": {
             "python": ["python", "python3"],
             "bash": ["bash", "shell scripting", "shell"],
@@ -75,7 +87,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
             "sql": ["sql", "postgresql", "mysql", "sqlite", "db2"],
             "fastapi": ["fastapi", "fast api"],
             "docker": ["docker", "containers"],
-            "kubernetes": ["kubernetes", "k8s"],
+            "kubernetes": ["kubernetes", "k8s", "gke", "google kubernetes engine"],
             "anthos": ["anthos"],
             "terraform": ["terraform"],
             "helm": ["helm"],
@@ -106,12 +118,15 @@ DEFAULT_CONFIG: dict[str, Any] = {
     },
     "matching": {
         "minimum_score": 45,
-        "max_results": 20,
+        # Keep up to 100 discovered roles in the daily review queue. A human
+        # still selects any role before a tailored draft is prepared.
+        "max_results": 100,
         "weights": {
-            "required_skills": 70,
-            "preferred_skills": 15,
-            "title": 10,
+            "required_skills": 55,
+            "preferred_skills": 12,
+            "title": 8,
             "location": 5,
+            "semantic": 20,
         },
         # Jobs whose title or description contains one of these phrases are
         # omitted before scoring.  Leave empty to consider every job.
@@ -122,9 +137,21 @@ DEFAULT_CONFIG: dict[str, Any] = {
         # access. Replace it with a local JSON/JSONL file or an RSS source.
         {"type": "demo"},
     ],
+    # --live uses this public, attribution-preserving source. It is intentionally
+    # separate from the offline demo so a fresh clone is always testable.
+    "live_sources": [
+        {
+            "type": "remotive",
+            "name": "Remotive — SRE / DevOps",
+            "search": "site reliability engineer",
+            "limit": 100,
+            "cache_hours": 6,
+        },
+    ],
     "storage": {
         "database": "data/job_auto.sqlite3",
         "report": "output/job_matches.csv",
+        "details_report": "output/job_matches.json",
     },
 }
 
@@ -156,15 +183,14 @@ def _validate(config: dict[str, Any]) -> None:
         if not isinstance(config.get(section), Mapping):
             raise ConfigError(f"'{section}' must be a mapping")
 
-    # This project is deliberately shipped in regex-only mode. A true value
-    # would falsely imply that a model is installed and being used.
-    if config["nlp"].get("spacy_available") is not False:
-        raise ConfigError(
-            "Option A requires nlp.spacy_available: false; install and wire a "
-            "spaCy model before changing this setting."
-        )
-    if config["nlp"].get("engine", "regex").lower() != "regex":
-        raise ConfigError("Option A supports only nlp.engine: regex")
+    engine = config["nlp"].get("engine", "regex")
+    if not isinstance(engine, str) or engine.lower() not in {"regex", "hybrid", "spacy"}:
+        raise ConfigError("nlp.engine must be one of: regex, hybrid, spacy")
+    config["nlp"]["engine"] = engine.lower()
+    model_name = config["nlp"].get("spacy_model", "en_core_web_sm")
+    if not isinstance(model_name, str) or not model_name.strip():
+        raise ConfigError("nlp.spacy_model must be a non-empty model name")
+    config["nlp"]["spacy_model"] = model_name.strip()
 
     profile = config["profile"]
     profile["target_roles"] = _as_string_list(profile.get("target_roles"), "profile.target_roles")
@@ -172,6 +198,8 @@ def _validate(config: dict[str, Any]) -> None:
     profile["skills"] = _as_string_list(profile.get("skills"), "profile.skills")
     if profile.get("resume") is not None and not isinstance(profile["resume"], str):
         raise ConfigError("'profile.resume' must be a path string or null")
+    if profile.get("summary") is not None and not isinstance(profile["summary"], str):
+        raise ConfigError("'profile.summary' must be a string or null")
 
     catalog = config["skills"].get("catalog")
     if not isinstance(catalog, Mapping):
@@ -203,7 +231,7 @@ def _validate(config: dict[str, Any]) -> None:
     weights = matching.get("weights")
     if not isinstance(weights, Mapping):
         raise ConfigError("'matching.weights' must be a mapping")
-    required_weight_names = {"required_skills", "preferred_skills", "title", "location"}
+    required_weight_names = {"required_skills", "preferred_skills", "title", "location", "semantic"}
     missing_weights = required_weight_names - set(weights)
     if missing_weights:
         raise ConfigError(f"matching.weights is missing: {', '.join(sorted(missing_weights))}")
@@ -218,14 +246,17 @@ def _validate(config: dict[str, Any]) -> None:
         raise ConfigError("at least one matching weight must be positive")
     matching["exclude_terms"] = _as_string_list(matching.get("exclude_terms"), "matching.exclude_terms")
 
-    if not isinstance(config.get("sources"), list):
-        raise ConfigError("'sources' must be a list")
-    for index, source in enumerate(config["sources"]):
-        if not isinstance(source, Mapping) or not isinstance(source.get("type"), str):
-            raise ConfigError(f"sources[{index}] must be a mapping with a string 'type'")
+    for source_group in ("sources", "live_sources"):
+        if not isinstance(config.get(source_group), list):
+            raise ConfigError(f"'{source_group}' must be a list")
+        for index, source in enumerate(config[source_group]):
+            if not isinstance(source, Mapping) or not isinstance(source.get("type"), str):
+                raise ConfigError(
+                    f"{source_group}[{index}] must be a mapping with a string 'type'"
+                )
 
     storage = config["storage"]
-    for key in ("database", "report"):
+    for key in ("database", "report", "details_report"):
         if not isinstance(storage.get(key), str) or not storage[key].strip():
             raise ConfigError(f"storage.{key} must be a non-empty path string")
 

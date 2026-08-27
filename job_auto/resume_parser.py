@@ -5,15 +5,10 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from pathlib import Path
 import re
-from typing import Iterable, Mapping
+from typing import Callable, Iterable, Mapping
 
-from config import SPACY_AVAILABLE as CONFIG_SPACY_AVAILABLE
 
-# Keep the Option A contract visible in the NLP module as well as config.py.
-# No spaCy import is attempted while this is False.
-SPACY_AVAILABLE = False
-if CONFIG_SPACY_AVAILABLE is not SPACY_AVAILABLE:  # pragma: no cover - defensive configuration guard.
-    raise RuntimeError("The regex fallback flag must be consistent across job_auto modules")
+SkillExtractor = Callable[[str, Mapping[str, Iterable[str]]], tuple[str, ...]]
 
 
 class ResumeError(ValueError):
@@ -103,8 +98,12 @@ def _extract_years_experience(text: str) -> int | None:
     return max((int(years) for years in matches), default=None)
 
 
-def parse_resume_text(text: str, catalog: Mapping[str, Iterable[str]]) -> ResumeProfile:
-    """Parse plain text with regex-only extraction (the Option A fallback)."""
+def parse_resume_text(
+    text: str,
+    catalog: Mapping[str, Iterable[str]],
+    skill_extractor: SkillExtractor = extract_skills,
+) -> ResumeProfile:
+    """Parse plain text with an injected NLP extractor or the regex fallback."""
 
     cleaned = text.replace("\x00", " ").strip()
     if not cleaned:
@@ -112,19 +111,35 @@ def parse_resume_text(text: str, catalog: Mapping[str, Iterable[str]]) -> Resume
     email, phone = _extract_contact(cleaned)
     return ResumeProfile(
         text=cleaned,
-        skills=extract_skills(cleaned, catalog),
+        skills=skill_extractor(cleaned, catalog),
         email=email,
         phone=phone,
         years_experience=_extract_years_experience(cleaned),
     )
 
 
+def _latex_to_text(source: str) -> str:
+    """Remove common presentation markup from a resume's LaTeX source.
+
+    This is intentionally not a full TeX parser. It preserves the human text
+    inside common resume commands so skill matching can use a `.tex` source
+    directly without compiling or storing a PDF.
+    """
+
+    text = re.sub(r"\\href\{[^{}]*\}\{([^{}]*)\}", r"\1", source)
+    text = re.sub(r"\\(?:textbf|textit|texttt|small|large)\{([^{}]*)\}", r"\1", text)
+    text = re.sub(r"\\(?:begin|end|usepackage|documentclass|definecolor|newcommand)[^\n]*", " ", text)
+    text = text.replace(r"\\", "\n").replace("~", " ")
+    text = re.sub(r"\\[A-Za-z]+(?:\[[^\]]*\])?", " ", text)
+    text = text.replace("{", " ").replace("}", " ").replace("$", " ")
+    return re.sub(r"\s+", " ", text).strip()
+
+
 def read_resume(path: str | Path) -> str:
-    """Read a UTF-8 text/Markdown resume, or extract text from a PDF.
+    """Read text/Markdown/LaTeX resume source, or extract text from a PDF.
 
     PDF support is optional at import time; it only needs ``pypdf`` when a PDF
-    is actually supplied.  Text files therefore keep the demo and basic setup
-    lightweight.
+    is actually supplied. Text and `.tex` files keep matching lightweight.
     """
 
     resume_path = Path(path).expanduser().resolve()
@@ -132,13 +147,14 @@ def read_resume(path: str | Path) -> str:
         raise ResumeError(f"Resume file not found: {resume_path}")
 
     suffix = resume_path.suffix.lower()
-    if suffix in {".txt", ".md", ".rst"}:
+    if suffix in {".txt", ".md", ".rst", ".tex"}:
         try:
-            return resume_path.read_text(encoding="utf-8")
+            text = resume_path.read_text(encoding="utf-8")
         except UnicodeDecodeError as exc:
             raise ResumeError(f"Resume text file is not UTF-8: {resume_path}") from exc
         except OSError as exc:
             raise ResumeError(f"Could not read resume file {resume_path}: {exc}") from exc
+        return _latex_to_text(text) if suffix == ".tex" else text
 
     if suffix == ".pdf":
         try:
@@ -159,11 +175,15 @@ def read_resume(path: str | Path) -> str:
             )
         return text
 
-    raise ResumeError("Supported resume formats are .txt, .md, .rst, and text-based .pdf")
+    raise ResumeError("Supported resume formats are .txt, .md, .rst, .tex, and text-based .pdf")
 
 
-def parse_resume_file(path: str | Path, catalog: Mapping[str, Iterable[str]]) -> ResumeProfile:
-    return parse_resume_text(read_resume(path), catalog)
+def parse_resume_file(
+    path: str | Path,
+    catalog: Mapping[str, Iterable[str]],
+    skill_extractor: SkillExtractor = extract_skills,
+) -> ResumeProfile:
+    return parse_resume_text(read_resume(path), catalog, skill_extractor)
 
 
 def add_profile_skills(

@@ -1,3 +1,8 @@
-# Option A intentionally has no spaCy dependency or language-model download.
+# Local matching only: no hosted LLM/API key is required.
 PyYAML>=6.0,<7.0
 pypdf>=4.0,<6.0
+scikit-learn>=1.4,<2.0
+spacy>=3.7,<4.0
+
+# Optional but recommended for spaCy's trained English pipeline:
+# python -m spacy download en_core_web_sm

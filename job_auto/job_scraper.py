@@ -13,8 +13,10 @@ from html import unescape
 import json
 from pathlib import Path
 import re
+import time
 from typing import Any, Iterable, Mapping
 from urllib.error import HTTPError, URLError
+from urllib.parse import quote, urlencode
 from urllib.request import Request, urlopen
 import xml.etree.ElementTree as ET
 
@@ -35,6 +37,9 @@ class Job:
     description: str
     source: str
     posted_at: str = ""
+    salary: str = ""
+    employment_type: str = ""
+    category: str = ""
     required_skills: tuple[str, ...] = field(default_factory=tuple)
     preferred_skills: tuple[str, ...] = field(default_factory=tuple)
 
@@ -160,10 +165,19 @@ def normalize_job(record: Mapping[str, Any], source: str) -> Job | None:
     if not title:
         return None
     company = _clean_text(_first(record, "company", "company_name", "organization", "employer"))
-    location = _clean_text(_first(record, "location", "job_location", "city"))
-    url = _clean_text(_first(record, "url", "apply_url", "link", "job_url"))
-    description = _clean_text(_first(record, "description", "content", "summary", "body"))
-    posted_at = _clean_text(_first(record, "posted_at", "date", "pubDate", "published"))
+    location = _clean_text(
+        _first(record, "location", "job_location", "candidate_required_location", "city")
+    )
+    url = _clean_text(_first(record, "url", "apply_url", "link", "job_url", "absolute_url", "hostedUrl"))
+    description = _clean_text(
+        _first(record, "description", "content", "contentPlain", "descriptionPlain", "summary", "body")
+    )
+    posted_at = _clean_text(
+        _first(record, "posted_at", "publication_date", "updated_at", "date", "pubDate", "published")
+    )
+    salary = _clean_text(_first(record, "salary", "salary_range", "compensation"))
+    employment_type = _clean_text(_first(record, "employment_type", "job_type", "commitment"))
+    category = _clean_text(_first(record, "category", "team", "department"))
     required = _string_list(_first(record, "required_skills", "requirements", "must_have"))
     preferred = _string_list(_first(record, "preferred_skills", "nice_to_have", "preferred"))
 
@@ -176,6 +190,9 @@ def normalize_job(record: Mapping[str, Any], source: str) -> Job | None:
         description=description,
         source=source,
         posted_at=posted_at,
+        salary=salary,
+        employment_type=employment_type,
+        category=category,
         required_skills=required,
         preferred_skills=preferred,
     )
@@ -246,6 +263,37 @@ def _fetch_url(url: str, timeout: int = 20) -> str:
         raise SourceError(f"Could not fetch {url}: {exc.reason}") from exc
 
 
+def _cached_or_fetched_text(url: str, base_dir: Path, cache_hours: float, timeout: int) -> str:
+    """Read a short-lived local cache before requesting a public jobs API.
+
+    This keeps routine runs respectful of public API rate limits. Cache files
+    are created under the project's ignored ``data/source_cache`` directory.
+    """
+
+    cache_path: Path | None = None
+    if cache_hours > 0:
+        cache_key = sha256(url.encode("utf-8")).hexdigest()[:20]
+        cache_path = base_dir / "data" / "source_cache" / f"{cache_key}.json"
+        try:
+            age_seconds = time.time() - cache_path.stat().st_mtime
+            if age_seconds < cache_hours * 3600:
+                return cache_path.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            pass
+        except OSError:
+            # A cache is an optimization, not a reason to block live discovery.
+            pass
+
+    text = _fetch_url(url, timeout)
+    if cache_path is not None:
+        try:
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
+            cache_path.write_text(text, encoding="utf-8")
+        except OSError:
+            pass
+    return text
+
+
 def _load_json_source(source: Mapping[str, Any], base_dir: Path, source_name: str) -> list[Job]:
     path = source.get("path")
     url = source.get("url")
@@ -263,7 +311,12 @@ def _load_json_source(source: Mapping[str, Any], base_dir: Path, source_name: st
         label = str(source_path)
     else:
         label = str(url)
-        text = _fetch_url(label, int(source.get("timeout", 20)))
+        text = _cached_or_fetched_text(
+            label,
+            base_dir,
+            float(source.get("cache_hours", 0)),
+            int(source.get("timeout", 20)),
+        )
 
     return [job for record in _records_from_json_text(text, label) if (job := normalize_job(record, source_name))]
 
@@ -282,11 +335,16 @@ def _element_text(element: ET.Element, *names: str) -> str:
     return ""
 
 
-def _load_rss_source(source: Mapping[str, Any], source_name: str) -> list[Job]:
+def _load_rss_source(source: Mapping[str, Any], base_dir: Path, source_name: str) -> list[Job]:
     url = source.get("url")
     if not isinstance(url, str) or not url.strip():
         raise SourceError(f"RSS source '{source_name}' needs a non-empty 'url'")
-    xml_text = _fetch_url(url, int(source.get("timeout", 20)))
+    xml_text = _cached_or_fetched_text(
+        url,
+        base_dir,
+        float(source.get("cache_hours", 0)),
+        int(source.get("timeout", 20)),
+    )
     try:
         root = ET.fromstring(xml_text)
     except ET.ParseError as exc:
@@ -319,6 +377,129 @@ def _load_rss_source(source: Mapping[str, Any], source_name: str) -> list[Job]:
     return [job for record in records if (job := normalize_job(record, source_name))]
 
 
+def _source_number(
+    source: Mapping[str, Any], key: str, default: int | float, minimum: int | float, maximum: int | float
+) -> int | float:
+    try:
+        value = type(default)(source.get(key, default))
+    except (TypeError, ValueError) as exc:
+        raise SourceError(f"Source option '{key}' must be numeric") from exc
+    if not minimum <= value <= maximum:
+        raise SourceError(f"Source option '{key}' must be between {minimum} and {maximum}")
+    return value
+
+
+def _api_records(text: str, label: str) -> list[Mapping[str, Any]]:
+    """Parse a public JSON API response through the same schema validator."""
+
+    return _records_from_json_text(text, label)
+
+
+def _load_remotive_source(source: Mapping[str, Any], base_dir: Path, source_name: str) -> list[Job]:
+    """Load active remote listings from Remotive's documented public API.
+
+    The output retains the Remotive job URL and source name for attribution.
+    One source produces one cached request, rather than crawling job-board pages.
+    """
+
+    endpoint = str(source.get("endpoint", "https://remotive.com/api/remote-jobs")).strip()
+    if not endpoint.startswith(("https://", "http://")):
+        raise SourceError(f"Remotive endpoint for '{source_name}' must be an HTTP(S) URL")
+    limit = int(_source_number(source, "limit", 100, 1, 100))
+    params: dict[str, str | int] = {"limit": limit}
+    for key in ("search", "category", "company_name"):
+        value = source.get(key)
+        if value is not None and str(value).strip():
+            params[key] = str(value).strip()
+    separator = "&" if "?" in endpoint else "?"
+    url = f"{endpoint}{separator}{urlencode(params)}"
+    text = _cached_or_fetched_text(
+        url,
+        base_dir,
+        float(_source_number(source, "cache_hours", 6.0, 0.0, 168.0)),
+        int(_source_number(source, "timeout", 20, 1, 60)),
+    )
+    records = _api_records(text, url)
+    return [job for record in records if (job := normalize_job(record, source_name))]
+
+
+def _load_greenhouse_source(source: Mapping[str, Any], base_dir: Path, source_name: str) -> list[Job]:
+    """Load a company's public Greenhouse board through its documented API."""
+
+    board = source.get("board")
+    if not isinstance(board, str) or not board.strip():
+        raise SourceError(f"Greenhouse source '{source_name}' needs a non-empty 'board' token")
+    endpoint = str(source.get("endpoint", "https://boards-api.greenhouse.io/v1/boards")).rstrip("/")
+    url = f"{endpoint}/{quote(board.strip(), safe='-_')}/jobs?content=true"
+    text = _cached_or_fetched_text(
+        url,
+        base_dir,
+        float(_source_number(source, "cache_hours", 6.0, 0.0, 168.0)),
+        int(_source_number(source, "timeout", 20, 1, 60)),
+    )
+    records = _api_records(text, url)
+    company = _clean_text(source.get("company", ""))
+    normalized_records: list[Mapping[str, Any]] = []
+    for record in records:
+        location = record.get("location", "")
+        if isinstance(location, Mapping):
+            location = location.get("name", "")
+        departments = record.get("departments", [])
+        category = ", ".join(
+            _clean_text(item.get("name", "")) for item in departments if isinstance(item, Mapping)
+        )
+        normalized_records.append(
+            {
+                "id": record.get("id", ""),
+                "title": record.get("title", ""),
+                "company": company,
+                "location": location,
+                "url": record.get("absolute_url", ""),
+                "description": record.get("content", ""),
+                "posted_at": record.get("updated_at", ""),
+                "category": category,
+            }
+        )
+    return [job for record in normalized_records if (job := normalize_job(record, source_name))]
+
+
+def _load_lever_source(source: Mapping[str, Any], base_dir: Path, source_name: str) -> list[Job]:
+    """Load a company's public Lever board through its documented postings API."""
+
+    site = source.get("site")
+    if not isinstance(site, str) or not site.strip():
+        raise SourceError(f"Lever source '{source_name}' needs a non-empty 'site' token")
+    endpoint = str(source.get("endpoint", "https://api.lever.co/v0/postings")).rstrip("/")
+    url = f"{endpoint}/{quote(site.strip(), safe='-_')}?mode=json"
+    text = _cached_or_fetched_text(
+        url,
+        base_dir,
+        float(_source_number(source, "cache_hours", 6.0, 0.0, 168.0)),
+        int(_source_number(source, "timeout", 20, 1, 60)),
+    )
+    records = _api_records(text, url)
+    company = _clean_text(source.get("company", ""))
+    normalized_records: list[Mapping[str, Any]] = []
+    for record in records:
+        categories = record.get("categories", {})
+        if not isinstance(categories, Mapping):
+            categories = {}
+        normalized_records.append(
+            {
+                "id": record.get("id", ""),
+                "title": record.get("text", record.get("title", "")),
+                "company": company,
+                "location": categories.get("location", ""),
+                "url": record.get("hostedUrl", record.get("applyUrl", "")),
+                "description": record.get("descriptionPlain", record.get("description", "")),
+                "posted_at": record.get("createdAt", ""),
+                "category": categories.get("team", categories.get("department", "")),
+                "employment_type": categories.get("commitment", ""),
+            }
+        )
+    return [job for record in normalized_records if (job := normalize_job(record, source_name))]
+
+
 def load_jobs(sources: Iterable[Mapping[str, Any]], base_dir: Path) -> list[Job]:
     """Load, normalize, and de-duplicate postings from configured sources."""
 
@@ -335,11 +516,17 @@ def load_jobs(sources: Iterable[Mapping[str, Any]], base_dir: Path) -> list[Job]
         elif source_type == "json":
             loaded = _load_json_source(source, base_dir, source_name)
         elif source_type == "rss":
-            loaded = _load_rss_source(source, source_name)
+            loaded = _load_rss_source(source, base_dir, source_name)
+        elif source_type == "remotive":
+            loaded = _load_remotive_source(source, base_dir, source_name)
+        elif source_type == "greenhouse":
+            loaded = _load_greenhouse_source(source, base_dir, source_name)
+        elif source_type == "lever":
+            loaded = _load_lever_source(source, base_dir, source_name)
         else:
             raise SourceError(
                 f"Unsupported source type '{source_type}' for '{source_name}'. "
-                "Use demo, json, or rss."
+                "Use demo, json, rss, remotive, greenhouse, or lever."
             )
         jobs.extend(loaded)
 

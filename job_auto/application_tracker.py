@@ -125,15 +125,24 @@ class ApplicationTracker:
                 writer = csv.DictWriter(
                     handle,
                     fieldnames=[
+                        "job_id",
                         "score",
+                        "keyword_score",
+                        "semantic_score",
                         "title",
                         "company",
                         "location",
                         "url",
                         "source",
                         "posted_at",
+                        "employment_type",
+                        "salary",
+                        "category",
+                        "required_skills",
+                        "preferred_skills",
                         "matched_skills",
                         "missing_skills",
+                        "description",
                         "reasons",
                         "review_status",
                     ],
@@ -142,21 +151,58 @@ class ApplicationTracker:
                 for match in rows:
                     writer.writerow(
                         {
+                            "job_id": match.job.id,
                             "score": f"{match.score:.1f}",
+                            "keyword_score": f"{match.keyword_score:.1f}",
+                            "semantic_score": (
+                                f"{match.semantic_score:.1f}"
+                                if match.semantic_score is not None
+                                else ""
+                            ),
                             "title": match.job.title,
                             "company": match.job.company,
                             "location": match.job.location,
                             "url": match.job.url,
                             "source": match.job.source,
                             "posted_at": match.job.posted_at,
+                            "employment_type": match.job.employment_type,
+                            "salary": match.job.salary,
+                            "category": match.job.category,
+                            "required_skills": ", ".join(match.job.required_skills),
+                            "preferred_skills": ", ".join(match.job.preferred_skills),
                             "matched_skills": ", ".join(match.matched_skills),
                             "missing_skills": ", ".join(match.missing_skills),
+                            "description": match.job.description,
                             "reasons": " | ".join(match.reasons),
                             "review_status": "review",
                         }
                     )
         except OSError as exc:
             raise TrackerError(f"Could not write CSV report {output_path}: {exc}") from exc
+        return output_path
+
+    def export_json(
+        self,
+        path: str | Path,
+        matches: Iterable[JobMatch],
+        model_status: dict[str, object] | None = None,
+    ) -> Path:
+        """Write complete job details plus scoring evidence as readable JSON."""
+
+        output_path = Path(path).expanduser().resolve()
+        payload: dict[str, object] = {
+            "generated_at": datetime.now(UTC).replace(microsecond=0).isoformat(),
+            "model": model_status or {},
+            "matches": [match.to_dict() for match in matches],
+        }
+        try:
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            output_path.write_text(
+                json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True),
+                encoding="utf-8",
+            )
+        except OSError as exc:
+            raise TrackerError(f"Could not write JSON details report {output_path}: {exc}") from exc
         return output_path
 
     def summary(self) -> dict[str, int]:
