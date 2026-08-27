@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from pathlib import Path
+import re
 from typing import Any, Mapping
 
 import yaml
@@ -32,8 +33,9 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "profile": {
         "name": "Your Name",
         "resume": None,
-        # Used by --live until a local resume path is supplied. Keep it factual
-        # and free of contact details; it is relevance input, not an application.
+        # Starter example used by --live until a local resume path is supplied.
+        # Replace it with confirmed facts and keep it free of contact details;
+        # it is relevance input, not an application.
         "summary": (
             "Site Reliability and Platform Operations engineer with 3+ years of "
             "experience supporting distributed enterprise applications. Experience with GCP "
@@ -51,7 +53,23 @@ DEFAULT_CONFIG: dict[str, Any] = {
             "cloud operations engineer",
             "production support engineer",
         ],
-        "locations": ["delhi", "new delhi", "noida", "gurugram", "gurgaon", "remote"],
+        "locations": [
+            "delhi",
+            "new delhi",
+            "noida",
+            "gurugram",
+            "gurgaon",
+            "ghaziabad",
+            "faridabad",
+            "india",
+            "bengaluru",
+            "bangalore",
+            "hyderabad",
+            "pune",
+            "mumbai",
+            "chennai",
+            "remote",
+        ],
         # Add skills here when they are not written in the resume text.
         "skills": [
             "gcp",
@@ -148,9 +166,37 @@ DEFAULT_CONFIG: dict[str, Any] = {
             "name": "Remotive — SRE / DevOps",
             "search": "site reliability engineer",
             "limit": 100,
-            "cache_hours": 6,
+            "cache_hours": 24,
         },
     ],
+    "daily_search": {
+        # The GitHub Actions workflow uses 02:30 UTC, which is 08:00 in
+        # Asia/Kolkata. GitHub may delay scheduled workflows during high load.
+        "timezone": "Asia/Kolkata",
+        "morning_time": "08:00",
+        "max_results": 100,
+        # Search full-time roles across the arrangements requested by the user.
+        # Unknown values are retained and labelled for human review instead of
+        # silently dropping an otherwise relevant official listing.
+        "workplace_types": ["remote", "hybrid", "on-site"],
+        "employment_types": ["full-time"],
+        "include_unknown_workplace_type": True,
+        "include_unknown_employment_type": True,
+        # The daily runner adds a transparent regional ordering: Delhi NCR,
+        # then India / India-remote, then other remote opportunities.
+        "title_keywords": [
+            "site reliability",
+            "sre",
+            "devops",
+            "platform",
+            "cloud engineer",
+            "cloud operations",
+            "reliability engineer",
+            "production support",
+        ],
+        "exclude_title_terms": ["intern", "manager", "director", "principal", "staff", "architect"],
+        "output_dir": "output/daily",
+    },
     "storage": {
         "database": "data/job_auto.sqlite3",
         "report": "output/job_matches.csv",
@@ -182,7 +228,7 @@ def _as_string_list(value: Any, name: str) -> list[str]:
 
 
 def _validate(config: dict[str, Any]) -> None:
-    for section in ("nlp", "profile", "skills", "matching", "storage"):
+    for section in ("nlp", "profile", "skills", "matching", "daily_search", "storage"):
         if not isinstance(config.get(section), Mapping):
             raise ConfigError(f"'{section}' must be a mapping")
 
@@ -248,6 +294,35 @@ def _validate(config: dict[str, Any]) -> None:
     if sum(weights.values()) <= 0:
         raise ConfigError("at least one matching weight must be positive")
     matching["exclude_terms"] = _as_string_list(matching.get("exclude_terms"), "matching.exclude_terms")
+
+    daily_search = config["daily_search"]
+    try:
+        daily_limit = int(daily_search.get("max_results", 100))
+    except (TypeError, ValueError) as exc:
+        raise ConfigError("'daily_search.max_results' must be an integer") from exc
+    if not 1 <= daily_limit <= 100:
+        raise ConfigError("'daily_search.max_results' must be between 1 and 100")
+    daily_search["max_results"] = daily_limit
+    daily_search["workplace_types"] = _as_string_list(
+        daily_search.get("workplace_types"), "daily_search.workplace_types"
+    )
+    daily_search["employment_types"] = _as_string_list(
+        daily_search.get("employment_types"), "daily_search.employment_types"
+    )
+    daily_search["title_keywords"] = _as_string_list(
+        daily_search.get("title_keywords"), "daily_search.title_keywords"
+    )
+    daily_search["exclude_title_terms"] = _as_string_list(
+        daily_search.get("exclude_title_terms"), "daily_search.exclude_title_terms"
+    )
+    for key in ("include_unknown_workplace_type", "include_unknown_employment_type"):
+        if not isinstance(daily_search.get(key), bool):
+            raise ConfigError(f"daily_search.{key} must be true or false")
+    for key in ("timezone", "morning_time", "output_dir"):
+        if not isinstance(daily_search.get(key), str) or not daily_search[key].strip():
+            raise ConfigError(f"daily_search.{key} must be a non-empty string")
+    if not re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d", daily_search["morning_time"]):
+        raise ConfigError("daily_search.morning_time must use 24-hour HH:MM format")
 
     for source_group in ("sources", "live_sources"):
         if not isinstance(config.get(source_group), list):

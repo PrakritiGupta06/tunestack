@@ -59,6 +59,17 @@ class ApplicationTracker:
                 """
             )
 
+    def known_job_ids(self) -> set[str]:
+        """Return job ids already present before a daily run records new matches."""
+
+        self.initialize()
+        try:
+            with self._connect() as connection:
+                rows = connection.execute("SELECT job_id FROM job_matches").fetchall()
+        except sqlite3.Error as exc:
+            raise TrackerError(f"Could not read local database {self.database_path}: {exc}") from exc
+        return {str(row["job_id"]) for row in rows}
+
     def record_matches(self, matches: Iterable[JobMatch]) -> int:
         """Insert or refresh matches, preserving a reviewer-chosen status."""
 
@@ -136,6 +147,7 @@ class ApplicationTracker:
                         "source",
                         "posted_at",
                         "employment_type",
+                        "workplace_type",
                         "salary",
                         "category",
                         "required_skills",
@@ -166,6 +178,7 @@ class ApplicationTracker:
                             "source": match.job.source,
                             "posted_at": match.job.posted_at,
                             "employment_type": match.job.employment_type,
+                            "workplace_type": match.job.workplace_type,
                             "salary": match.job.salary,
                             "category": match.job.category,
                             "required_skills": ", ".join(match.job.required_skills),

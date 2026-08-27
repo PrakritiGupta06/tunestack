@@ -39,6 +39,7 @@ class Job:
     posted_at: str = ""
     salary: str = ""
     employment_type: str = ""
+    workplace_type: str = ""
     category: str = ""
     required_skills: tuple[str, ...] = field(default_factory=tuple)
     preferred_skills: tuple[str, ...] = field(default_factory=tuple)
@@ -124,6 +125,41 @@ def _clean_text(value: Any) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
+def _normalize_workplace_type(value: Any) -> str:
+    """Normalize public-board arrangement labels without guessing a location.
+
+    Boards use a mix of ``Remote``, ``work from home``, ``On-site`` and
+    ``Hybrid``. Keeping a small shared vocabulary makes daily filters and CSV
+    reports consistent while an empty value remains honestly unknown.
+    """
+
+    text = _clean_text(value).lower()
+    # Prefer an explicit hybrid label over an incidental mention of remote work.
+    if "hybrid" in text:
+        return "hybrid"
+    if re.search(r"\b(remote|work\s+from\s+home|wfh|telecommut(?:e|ing))\b", text):
+        return "remote"
+    if re.search(r"\b(on[ -]?site|in[ -]?office|office[- ]based)\b", text):
+        return "on-site"
+    return ""
+
+
+def _normalize_employment_type(value: Any) -> str:
+    """Return a stable employment label when a source supplies one."""
+
+    text = _clean_text(value)
+    normalized = text.lower()
+    if re.search(r"\bfull[ _-]?time\b", normalized) or "on-roll" in normalized or "on roll" in normalized:
+        return "full-time"
+    if re.search(r"\bpart[ _-]?time\b", normalized):
+        return "part-time"
+    if "intern" in normalized:
+        return "internship"
+    if "contract" in normalized or "freelance" in normalized:
+        return "contract"
+    return text
+
+
 def _string_list(value: Any) -> tuple[str, ...]:
     if value is None:
         return ()
@@ -143,6 +179,22 @@ def _first(record: Mapping[str, Any], *keys: str) -> Any:
         value = record.get(key)
         if value is not None and str(value).strip():
             return value
+    return ""
+
+
+def _metadata_value(metadata: Any, *names: str) -> str:
+    """Read a named Greenhouse metadata value, including multi-select values."""
+
+    if not isinstance(metadata, Iterable) or isinstance(metadata, (str, bytes, Mapping)):
+        return ""
+    wanted = {name.strip().lower() for name in names}
+    for item in metadata:
+        if not isinstance(item, Mapping) or _clean_text(item.get("name", "")).lower() not in wanted:
+            continue
+        value = item.get("value")
+        if isinstance(value, Iterable) and not isinstance(value, (str, bytes, Mapping)):
+            return " ".join(_clean_text(part) for part in value if _clean_text(part))
+        return _clean_text(value)
     return ""
 
 
@@ -176,9 +228,23 @@ def normalize_job(record: Mapping[str, Any], source: str) -> Job | None:
         _first(record, "posted_at", "publication_date", "updated_at", "date", "pubDate", "published")
     )
     salary = _clean_text(_first(record, "salary", "salary_range", "compensation"))
-    employment_type = _clean_text(_first(record, "employment_type", "job_type", "commitment"))
+    employment_type = _normalize_employment_type(
+        _first(record, "employment_type", "job_type", "commitment")
+    )
+    # Some boards provide the arrangement independently; others only mention it
+    # in a location or description. Empty remains an explicit "unknown" state.
+    workplace_type = _normalize_workplace_type(
+        _first(record, "workplace_type", "workplaceType", "workplace", "work_mode")
+    )
+    if not workplace_type:
+        workplace_type = _normalize_workplace_type(f"{location}\n{description}")
+    if not employment_type:
+        employment_type = _normalize_employment_type(description)
     category = _clean_text(_first(record, "category", "team", "department"))
-    required = _string_list(_first(record, "required_skills", "requirements", "must_have"))
+    # Remotive supplies its normalized technology keywords as `tags`; using
+    # them as explicit skills improves explainability without guessing unknown
+    # tags outside the configured catalog.
+    required = _string_list(_first(record, "required_skills", "requirements", "must_have", "tags"))
     preferred = _string_list(_first(record, "preferred_skills", "nice_to_have", "preferred"))
 
     return Job(
@@ -192,6 +258,7 @@ def normalize_job(record: Mapping[str, Any], source: str) -> Job | None:
         posted_at=posted_at,
         salary=salary,
         employment_type=employment_type,
+        workplace_type=workplace_type,
         category=category,
         required_skills=required,
         preferred_skills=preferred,
@@ -448,6 +515,7 @@ def _load_greenhouse_source(source: Mapping[str, Any], base_dir: Path, source_na
         category = ", ".join(
             _clean_text(item.get("name", "")) for item in departments if isinstance(item, Mapping)
         )
+        metadata = record.get("metadata", [])
         normalized_records.append(
             {
                 "id": record.get("id", ""),
@@ -457,6 +525,16 @@ def _load_greenhouse_source(source: Mapping[str, Any], base_dir: Path, source_na
                 "url": record.get("absolute_url", ""),
                 "description": record.get("content", ""),
                 "posted_at": record.get("updated_at", ""),
+                "employment_type": record.get("employment_type", "")
+                or _metadata_value(metadata, "employment type", "employment"),
+                "workplace_type": record.get("workplace_type", "")
+                or _metadata_value(
+                    metadata,
+                    "location type",
+                    "workplace type",
+                    "work arrangement",
+                    "work location type",
+                ),
                 "category": category,
             }
         )
@@ -484,56 +562,101 @@ def _load_lever_source(source: Mapping[str, Any], base_dir: Path, source_name: s
         categories = record.get("categories", {})
         if not isinstance(categories, Mapping):
             categories = {}
+        location = _clean_text(categories.get("location", ""))
+        # Lever supplies ISO country metadata separately for some postings.
+        # Preserve India in the display location so an otherwise bare city such
+        # as Chennai can be prioritized accurately in the daily India queue.
+        country = _clean_text(record.get("country", "")).upper()
+        if country in {"IN", "INDIA"} and "india" not in location.lower():
+            location = f"{location}, India" if location else "India"
         normalized_records.append(
             {
                 "id": record.get("id", ""),
                 "title": record.get("text", record.get("title", "")),
                 "company": company,
-                "location": categories.get("location", ""),
+                "location": location,
                 "url": record.get("hostedUrl", record.get("applyUrl", "")),
                 "description": record.get("descriptionPlain", record.get("description", "")),
                 "posted_at": record.get("createdAt", ""),
                 "category": categories.get("team", categories.get("department", "")),
                 "employment_type": categories.get("commitment", ""),
+                "workplace_type": record.get(
+                    "workplaceType", categories.get("workplaceType", "")
+                ),
             }
         )
     return [job for record in normalized_records if (job := normalize_job(record, source_name))]
 
 
-def load_jobs(sources: Iterable[Mapping[str, Any]], base_dir: Path) -> list[Job]:
-    """Load, normalize, and de-duplicate postings from configured sources."""
+def _load_one_source(source: Mapping[str, Any], index: int, base_dir: Path) -> list[Job]:
+    """Load one configured source so daily runs can isolate a source failure."""
 
-    jobs: list[Job] = []
-    for index, source in enumerate(sources):
-        source_type = str(source.get("type", "")).strip().lower()
-        source_name = str(source.get("name") or source_type or f"source-{index + 1}").strip()
-        if source_type == "demo":
-            loaded = [
-                job
-                for record in DEMO_JOBS
-                if (job := normalize_job(record, source_name))
-            ]
-        elif source_type == "json":
-            loaded = _load_json_source(source, base_dir, source_name)
-        elif source_type == "rss":
-            loaded = _load_rss_source(source, base_dir, source_name)
-        elif source_type == "remotive":
-            loaded = _load_remotive_source(source, base_dir, source_name)
-        elif source_type == "greenhouse":
-            loaded = _load_greenhouse_source(source, base_dir, source_name)
-        elif source_type == "lever":
-            loaded = _load_lever_source(source, base_dir, source_name)
-        else:
-            raise SourceError(
-                f"Unsupported source type '{source_type}' for '{source_name}'. "
-                "Use demo, json, rss, remotive, greenhouse, or lever."
-            )
-        jobs.extend(loaded)
+    source_type = str(source.get("type", "")).strip().lower()
+    source_name = str(source.get("name") or source_type or f"source-{index + 1}").strip()
+    if source_type == "demo":
+        return [
+            job
+            for record in DEMO_JOBS
+            if (job := normalize_job(record, source_name))
+        ]
+    if source_type == "json":
+        return _load_json_source(source, base_dir, source_name)
+    if source_type == "rss":
+        return _load_rss_source(source, base_dir, source_name)
+    if source_type == "remotive":
+        return _load_remotive_source(source, base_dir, source_name)
+    if source_type == "greenhouse":
+        return _load_greenhouse_source(source, base_dir, source_name)
+    if source_type == "lever":
+        return _load_lever_source(source, base_dir, source_name)
+    raise SourceError(
+        f"Unsupported source type '{source_type}' for '{source_name}'. "
+        "Use demo, json, rss, remotive, greenhouse, or lever."
+    )
 
-    # A URL is generally the best cross-source identifier. Fall back to the
-    # normalized id when the source does not provide a link.
+
+def _deduplicate_jobs(jobs: Iterable[Job]) -> list[Job]:
+    """De-duplicate cross-source records using URL when available."""
+
     unique: dict[str, Job] = {}
     for job in jobs:
         dedupe_key = job.url.lower() if job.url else job.id
         unique.setdefault(dedupe_key, job)
     return list(unique.values())
+
+
+def load_jobs(sources: Iterable[Mapping[str, Any]], base_dir: Path) -> list[Job]:
+    """Load, normalize, and de-duplicate postings from configured sources.
+
+    This strict variant preserves the command-line behavior: a failed source is
+    reported to the caller. Use :func:`load_jobs_best_effort` for an unattended
+    daily discovery run where one unavailable board should not hide all results.
+    """
+
+    jobs: list[Job] = []
+    for index, source in enumerate(sources):
+        jobs.extend(_load_one_source(source, index, base_dir))
+    return _deduplicate_jobs(jobs)
+
+
+def load_jobs_best_effort(
+    sources: Iterable[Mapping[str, Any]], base_dir: Path
+) -> tuple[list[Job], list[str]]:
+    """Load every available public source and return source-specific failures.
+
+    Job boards can rate-limit, change a public board token, or be temporarily
+    unavailable. A daily review queue should still contain results from healthy
+    sources, while the generated digest clearly lists every skipped source.
+    """
+
+    jobs: list[Job] = []
+    failures: list[str] = []
+    for index, source in enumerate(sources):
+        source_name = str(source.get("name") or source.get("type") or f"source-{index + 1}").strip()
+        try:
+            jobs.extend(_load_one_source(source, index, base_dir))
+        except SourceError as exc:
+            failures.append(f"{source_name}: {exc}")
+        except Exception as exc:  # noqa: BLE001 - an unattended run isolates one bad public source.
+            failures.append(f"{source_name}: unexpected {type(exc).__name__}: {exc}")
+    return _deduplicate_jobs(jobs), failures

@@ -8,6 +8,8 @@ nlp:
 
 profile:
   name: "Your Name"
+  # Starter example only: replace this profile with facts you confirm or a
+  # local resume before treating matches as personalized.
   # Set a relative or absolute path for normal runs, for example:
   # resume: "my_resume.txt"
   resume: null
@@ -28,16 +30,27 @@ profile:
     - "cloud engineer"
     - "cloud operations engineer"
     - "production support engineer"
-  # Delhi NCR and remote roles are prioritized. Add other cities as wanted.
+  # Delhi NCR and India / India-remote roles are prioritized. Add other cities
+  # as wanted; broader roles remain reviewable in the daily queue.
   locations:
     - "delhi"
     - "new delhi"
     - "noida"
     - "gurugram"
     - "gurgaon"
+    - "ghaziabad"
+    - "faridabad"
+    - "india"
+    - "bengaluru"
+    - "bangalore"
+    - "hyderabad"
+    - "pune"
+    - "mumbai"
+    - "chennai"
     - "remote"
-  # Verified skills from the candidate's SRE/platform resume. Values are
-  # normalized against skills.catalog aliases where possible.
+  # Starter skills used for local matching until you supply a factual resume.
+  # Verify or replace every item; values are normalized against skills.catalog
+  # aliases where possible.
   skills:
     - gcp
     - anthos
@@ -118,6 +131,33 @@ matching:
   # Example: ["unpaid internship", "commission only"]
   exclude_terms: []
 
+# The daily workflow ranks up to 100 full-time SRE/DevOps/cloud/platform roles.
+# It keeps unknown arrangement/type listings for review rather than hiding them.
+daily_search:
+  timezone: "Asia/Kolkata"
+  morning_time: "08:00"
+  max_results: 100
+  workplace_types: ["remote", "hybrid", "on-site"]
+  employment_types: ["full-time"]
+  include_unknown_workplace_type: true
+  include_unknown_employment_type: true
+  # Daily ordering keeps Delhi NCR first, then India / India-remote roles,
+  # then other remote and broader opportunities. This is a ranking preference,
+  # not a hard location filter.
+  title_keywords:
+    - "site reliability"
+    - "sre"
+    - "devops"
+    - "platform"
+    - "cloud engineer"
+    - "cloud operations"
+    - "reliability engineer"
+    - "production support"
+  # Avoid management and internships for the starter early-to-mid-career
+  # profile; senior individual-contributor roles remain visible for review.
+  exclude_title_terms: ["intern", "manager", "director", "principal", "staff", "architect"]
+  output_dir: "output/daily"
+
 sources:
   # The built-in source lets `python main.py --demo` run without network access.
   # Replace with one or more sources below for your own review queue.
@@ -135,28 +175,114 @@ sources:
   #   company: Example Company       # optional fallback metadata
   #   location: Remote               # optional fallback metadata
 
-# Run `python main.py --live` to use these sources instead of the offline demo.
-# Remotive is queried at most once per run and its job-detail URL and attribution
-# are preserved in the reports. Its remote-location restrictions still need your
-# review before applying.
+# Run `python main.py --live` for the strict one-off queue, or
+# `python daily_discovery.py` for the fault-tolerant daily 100-role digest.
+# Sources below are documented public APIs or public employer career boards.
+# The daily runner records a source failure but continues with healthy sources;
+# it never logs in to LinkedIn, Naukri, Indeed, or any application form.
 live_sources:
+  # Broad remote discovery across companies, with source attribution retained.
+  # Four query URLs are cached for 24 hours so routine local runs stay within
+  # Remotive's guidance of no more than four public API requests per day.
   - type: remotive
-    name: "Remotive — SRE / DevOps"
+    name: "Remotive — Site Reliability"
     search: "site reliability engineer"
     limit: 100
+    cache_hours: 24
+  - type: remotive
+    name: "Remotive — DevOps"
+    search: "devops engineer"
+    limit: 100
+    cache_hours: 24
+  - type: remotive
+    name: "Remotive — Platform"
+    search: "platform engineer"
+    limit: 100
+    cache_hours: 24
+  - type: remotive
+    name: "Remotive — Cloud"
+    search: "cloud engineer"
+    limit: 100
+    cache_hours: 24
+
+  # Curated public employer boards: growing product companies and established
+  # employers with India / Delhi NCR / remote hiring. The title and location
+  # filters decide which roles reach the 100-role review queue.
+  - type: greenhouse
+    name: "New Era Technology careers"
+    board: neweratech
+    company: "New Era Technology"
+    cache_hours: 6
+  - type: greenhouse
+    name: "Graviton Research Capital careers"
+    board: gravitonresearchcapital
+    company: "Graviton Research Capital LLP"
+    cache_hours: 6
+  - type: greenhouse
+    name: "HackerRank careers"
+    board: hackerrank
+    company: "HackerRank"
+    cache_hours: 6
+  - type: greenhouse
+    name: "PayPay India careers"
+    board: pay2dc
+    company: "PayPay India"
+    cache_hours: 6
+  - type: greenhouse
+    name: "DevRev careers"
+    board: devrev
+    company: "DevRev"
+    cache_hours: 6
+  - type: greenhouse
+    name: "Capco careers"
+    board: capco
+    company: "Capco"
+    cache_hours: 6
+  - type: greenhouse
+    name: "SmartBear careers"
+    board: smartbear
+    company: "SmartBear"
+    cache_hours: 6
+  - type: greenhouse
+    name: "AppDirect careers"
+    board: appdirect
+    company: "AppDirect"
+    cache_hours: 6
+  - type: greenhouse
+    name: "Razorpay careers"
+    board: razorpaysoftwareprivatelimited
+    company: "Razorpay"
     cache_hours: 6
 
-  # Add official company career-board APIs for Delhi NCR roles when you know a
-  # company board token/site. These use documented public endpoints, not login
-  # automation or job-board scraping.
-  # - type: greenhouse
-  #   name: Example company careers
-  #   board: example-company
-  #   company: Example Company
-  # - type: lever
-  #   name: Example company careers
-  #   site: example-company
-  #   company: Example Company
+  - type: lever
+    name: "Paytm Payments Services careers"
+    site: paytmpayments
+    company: "Paytm Payments Services"
+    cache_hours: 6
+  - type: lever
+    name: "ION Group careers"
+    site: ion
+    company: "ION Group / Lab49"
+    cache_hours: 6
+  - type: lever
+    name: "Lingaro careers"
+    site: lingarogroup
+    company: "Lingaro"
+    cache_hours: 6
+  - type: lever
+    name: "Zimperium careers"
+    site: zimperium
+    company: "Zimperium"
+    cache_hours: 6
+  - type: lever
+    name: "Balbix careers"
+    site: balbix
+    company: "Balbix"
+    cache_hours: 6
+
+# Add another official public Greenhouse or Lever board here as it is found.
+# This is intentionally a curated, extensible registry rather than a crawler
+# of login-protected job platforms or application forms.
 
 storage:
   # These paths are resolved relative to this config file.

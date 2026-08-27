@@ -59,10 +59,12 @@ intentionally fake and prove the pipeline without claiming to fetch live jobs.
 python main.py --live --show-profile
 ```
 
-`--live` uses `live_sources` in `config.yaml`. The initial source is Remotive's
-public API, queried once per run and cached for six hours. The report retains
-its job URL and source attribution. Review an employer's location and work-
-authorization rules on each job page before applying.
+`--live` uses `live_sources` in `config.yaml`, including public Remotive API
+queries. Each configured query is cached for 24 hours; the four default queries
+therefore stay within Remotive's guidance of no more than four public API
+requests per day during routine use. The report retains each job URL and source
+attribution. Review an employer's location and work-authorization rules on each
+job page before applying.
 
 For local Delhi NCR listings, add either:
 
@@ -72,6 +74,68 @@ For local Delhi NCR listings, add either:
 
 Examples are commented in `config.yaml`. The pipeline does not scrape
 login-protected LinkedIn, Naukri, Indeed, or similar pages.
+
+## Daily 100-role discovery queue
+
+Run the fault-tolerant daily runner to search the configured remote and official
+employer sources, filter for full-time SRE/DevOps/cloud/platform roles, and rank
+**up to 100** results against the supplied resume/profile:
+
+```bash
+python daily_discovery.py --config config.yaml --resume /path/to/resume.pdf
+```
+
+Without `--resume`, it uses the configurable, contact-free starter
+`profile.summary` and `profile.skills` from `config.yaml`. Verify or replace
+those fields with only facts you confirm; they are not a claim that the starter
+profile represents your resume. Supplying a local resume produces more
+personalized matching, and the resume itself is not uploaded by this tool.
+
+The default configuration searches four public Remotive queries plus curated
+public Greenhouse and Lever boards for established and growing employers. It
+handles a temporarily unavailable source as a visible warning rather than
+cancelling the complete daily run. Add more documented official boards to
+`live_sources` over time. No tool can honestly guarantee access to *every*
+job-platform listing, especially login-protected platforms; the goal is broad,
+permitted public coverage with source links retained for review.
+
+`daily_search` controls the 08:00 `Asia/Kolkata` target time, full-time filter,
+remote/hybrid/on-site arrangements, target titles, exclusion terms, and 100-role
+limit. The daily queue places Delhi NCR roles first, then India or India-remote
+roles, then other remote and broader opportunities; relevance decides ordering
+within each location tier. Roles with missing arrangement/type metadata are
+retained and labelled for review by default.
+
+### Daily reports
+
+A normal daily run creates ignored local files under `output/daily/`:
+
+| File | Contents |
+| --- | --- |
+| `daily_job_digest.md` | Human-readable queue with new roles first, score evidence, source warnings, and official listing links. |
+| `daily_job_digest.json` | Structured digest, model status, source failures, and new-versus-seen status. |
+| `job_matches.csv` | Spreadsheet-ready list of up to 100 ranked roles, including employment and work-arrangement labels. |
+
+The SQLite queue under `data/job_auto.sqlite3` preserves previously seen jobs
+and human review statuses when the same environment runs again.
+
+### Schedule it with GitHub Actions
+
+`.github/workflows/daily-job-discovery.yml` is configured for **08:00 IST**
+(02:30 UTC) every day and also supports a manual **Run workflow** action. It
+uploads the daily reports as a GitHub Actions artifact. It caches only public
+source responses and the local review-state database—no resume is committed or
+uploaded to job sites. GitHub scheduled workflows only run after this workflow
+exists on the repository's **default branch**, so merge the associated
+pull request before expecting daily runs. GitHub can delay cron jobs during
+heavy load, so treat 08:00 as a target rather than a guaranteed-to-the-minute
+notification.
+
+The workflow deliberately does **not** auto-apply. It will not log in, create
+accounts, bypass CAPTCHAs, upload resumes, answer screening/eligibility
+questions, or press an employer's submit button. Those actions require your
+review and final decision. It can prepare a ranked queue and tailored drafts
+once you select roles.
 
 ### Use a resume file
 
