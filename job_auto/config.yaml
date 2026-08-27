@@ -11,25 +11,62 @@ profile:
   # Set a relative or absolute path for normal runs, for example:
   # resume: "my_resume.txt"
   resume: null
+  # Initial search profile: early-to-mid-career SRE / DevOps / cloud roles.
   target_roles:
+    - "site reliability engineer"
+    - "sre"
     - "platform engineer"
-    - "backend engineer"
+    - "devops engineer"
+    - "cloud engineer"
+    - "cloud operations engineer"
+    - "production support engineer"
+  # Delhi NCR and remote roles are prioritized. Add other cities as wanted.
   locations:
+    - "delhi"
+    - "new delhi"
+    - "noida"
+    - "gurugram"
+    - "gurgaon"
     - "remote"
-  # Add skills that are valid but missing from the resume text. Values are
+  # Verified skills from the candidate's SRE/platform resume. Values are
   # normalized against skills.catalog aliases where possible.
-  skills: []
+  skills:
+    - gcp
+    - anthos
+    - kubernetes
+    - terraform
+    - docker
+    - helm
+    - github actions
+    - python
+    - bash
+    - java
+    - spring boot
+    - pub/sub
+    - apache airflow
+    - splunk
+    - prometheus
+    - grafana
+    - linux
+    - sql
+    - incident response
+    - sli/slo
 
 skills:
   # Canonical skill: accepted aliases. Add only terms you want to score; this
   # keeps the regex matcher explainable and avoids broad, accidental matches.
   catalog:
     python: ["python", "python3"]
-    sql: ["sql", "postgresql", "mysql", "sqlite"]
+    bash: ["bash", "shell scripting", "shell"]
+    java: ["java"]
+    spring boot: ["spring boot", "springboot"]
+    sql: ["sql", "postgresql", "mysql", "sqlite", "db2"]
     fastapi: ["fastapi", "fast api"]
     docker: ["docker", "containers"]
     kubernetes: ["kubernetes", "k8s"]
+    anthos: ["anthos"]
     terraform: ["terraform"]
+    helm: ["helm"]
     gcp: ["gcp", "google cloud", "google cloud platform"]
     aws: ["aws", "amazon web services"]
     azure: ["azure", "microsoft azure"]
@@ -38,7 +75,15 @@ skills:
     ci/cd: ["ci/cd", "continuous integration", "continuous deployment"]
     prometheus: ["prometheus"]
     grafana: ["grafana"]
-    linux: ["linux"]
+    splunk: ["splunk"]
+    linux: ["linux", "unix"]
+    apache airflow: ["apache airflow", "airflow"]
+    pub/sub: ["pub/sub", "google pub/sub", "gcp pub/sub"]
+    rabbitmq: ["rabbitmq", "rabbit mq"]
+    incident response: ["incident response", "incident management", "major incident"]
+    sli/slo: ["sli/slo", "sli", "slo", "service level objective"]
+    pagerduty: ["pagerduty", "pager duty"]
+    servicenow: ["servicenow", "service now"]
     rest api: ["rest api", "restful api", "restful services"]
     pandas: ["pandas"]
     machine learning: ["machine learning", "ml"]
