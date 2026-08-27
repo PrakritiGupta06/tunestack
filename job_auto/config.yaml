@@ -46,6 +46,9 @@ profile:
     - docker
     - helm
     - github actions
+    - ci/cd
+    - git
+    - rest api
     - python
     - bash
     - java
@@ -92,7 +95,7 @@ skills:
     sli/slo: ["sli/slo", "sli", "slo", "service level objective"]
     pagerduty: ["pagerduty", "pager duty"]
     servicenow: ["servicenow", "service now"]
-    rest api: ["rest api", "restful api", "restful services"]
+    rest api: ["rest api", "rest apis", "restful api", "restful services"]
     pandas: ["pandas"]
     machine learning: ["machine learning", "ml"]
     javascript: ["javascript", "ecmascript"]

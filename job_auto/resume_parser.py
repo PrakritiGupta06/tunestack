@@ -72,9 +72,22 @@ def canonicalize_skills(values: Iterable[str], catalog: Mapping[str, Iterable[st
         key = str(value).strip().lower()
         if not key:
             continue
-        # Preserve an unknown value in the missing-skills report rather than
-        # quietly treating it as a known capability.
-        normalized.append(aliases_to_canonical.get(key, key))
+        exact_match = aliases_to_canonical.get(key)
+        if exact_match:
+            normalized.append(exact_match)
+            continue
+
+        # Public job boards frequently combine skills into labels such as
+        # "Linux/Unix" or "Python, Bash". Reuse the conservative phrase
+        # detector to normalize each known part rather than treating the whole
+        # label as a false missing skill.
+        embedded_matches = extract_skills(key, catalog)
+        if embedded_matches:
+            normalized.extend(embedded_matches)
+        else:
+            # Preserve an unknown value in the missing-skills report rather
+            # than quietly treating it as a known capability.
+            normalized.append(key)
     return tuple(dict.fromkeys(normalized))
 
 
