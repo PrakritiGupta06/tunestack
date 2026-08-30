@@ -1,3 +1,18 @@
+# TuneStack
+
+A production-style, cloud-native music recommendation API built with Python, FastAPI, Docker, Terraform, GKE Autopilot, GitHub Actions, Prometheus, and Grafana.
+
+## Live Demo
+
+- **Swagger API:** [http://34.172.215.228/docs](http://34.172.215.228/docs)
+- **Health Check:** [http://34.172.215.228/health](http://34.172.215.228/health)
+- **Prometheus Metrics:** [http://34.172.215.228/metrics](http://34.172.215.228/metrics)
+
+> The live environment runs on GKE Autopilot and may be taken offline temporarily to control cloud costs. The source, infrastructure, Kubernetes manifests, and CI/CD workflow remain available in this repository.
+
+---
+
+## Architecture and Data Flow
 
 **Data flow:**
 1. Developer pushes to `main` on GitHub
