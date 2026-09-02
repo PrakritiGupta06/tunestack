@@ -10,7 +10,9 @@ A production-style, cloud-native music recommendation API built with Python, Fas
 - **Health Check:** [http://34.172.215.228/health](http://34.172.215.228/health) (Offline)
 - **Prometheus Metrics:** [http://34.172.215.228/metrics](http://34.172.215.228/metrics) (Offline)
 
-> The live environment runs on GKE Autopilot and may be taken offline temporarily to control cloud costs. The source, infrastructure, Kubernetes manifests, and CI/CD workflow remain available in this repository.
+> The live environment runs on GKE Autopilot and may be taken offline temporarily to control cloud costs.
+> 
+> **Note:** The live GKE Autopilot environment has been spun down to save cloud costs, but you can view the full architecture, API usage, and infrastructure deployment in the video demo above. The source code, Terraform configurations, Kubernetes manifests, and CI/CD workflows remain available in this repository.
 
 ---
 
