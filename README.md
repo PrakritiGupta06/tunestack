@@ -4,18 +4,22 @@ A production-style, cloud-native music recommendation API built with Python, Fas
 
 ## Live Demo
 
-- **Swagger API:** [http://34.172.215.228/docs](http://34.172.215.228/docs)
-- **Health Check:** [http://34.172.215.228/health](http://34.172.215.228/health)
-- **Prometheus Metrics:** [http://34.172.215.228/metrics](http://34.172.215.228/metrics)
+▶️ **[Watch the Infrastructure & API Demo on YouTube](https://youtu.be/KzUd22zV6JU)**
 
-> The live environment runs on GKE Autopilot and may be taken offline temporarily to control cloud costs. The source, infrastructure, Kubernetes manifests, and CI/CD workflow remain available in this repository.
+- **Swagger API:** [http://34.172.215.228/docs](http://34.172.215.228/docs) (Offline)
+- **Health Check:** [http://34.172.215.228/health](http://34.172.215.228/health) (Offline)
+- **Prometheus Metrics:** [http://34.172.215.228/metrics](http://34.172.215.228/metrics) (Offline)
+
+> The live environment runs on GKE Autopilot and may be taken offline temporarily to control cloud costs.
+> 
+> **Note:** The live GKE Autopilot environment has been spun down to save cloud costs, but you can view the full architecture, API usage, and infrastructure deployment in the video demo above. The source code, Terraform configurations, Kubernetes manifests, and CI/CD workflows remain available in this repository.
 
 ---
 
 ## Architecture and Data Flow
 
 **Data flow:**
-1. Developer pushes to `main` on GitHub
+1. Code changes are pushed to `main` on GitHub
 2. GitHub Actions authenticates to GCP via Workload Identity Federation (OIDC, no static keys)
 3. CI runs pytest, builds Docker image, pushes to Artifact Registry
 4. CD applies K8s manifests to GKE — rolling deployment, zero downtime
